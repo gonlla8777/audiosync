@@ -1,32 +1,36 @@
+/**
+ * offscreen.ts - Motor de audio y WebRTC
+ * Gestiona la captura de la pestaña y el túnel P2P.
+ */
+
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
 
 chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'START_CAPTURE') {
-        // Limpieza lógica: si ya existe un stream, lo detenemos
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-            localStream = null;
-        }
-        captureAudio(message.streamId).catch(console.error);
-    } else if (message.type === 'START_WEBRTC_OFFER') {
-        createAndSendOffer().catch(console.error);
-    } else if (message.type === 'FROM_WS_TO_OFFSCREEN') {
-        const data = message.payload;
-        if (data.type === 'webrtc_offer') {
-            handleOffer(data.payload).catch(console.error);
-        } else if (data.type === 'webrtc_answer' && peerConnection) {
-            peerConnection.setRemoteDescription(new RTCSessionDescription(data.payload)).catch(console.error);
-        } else if (data.type === 'webrtc_ice_candidate' && peerConnection) {
-            peerConnection.addIceCandidate(new RTCIceCandidate(data.payload)).catch(console.error);
-        }
+    switch (message.type) {
+        case 'START_CAPTURE':
+            // Limpieza: si ya existía una captura, la detenemos
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            captureAudio(message.streamId).catch(console.error);
+            break;
+
+        case 'START_WEBRTC_OFFER':
+            // Inicia la oferta para conectar
+            createAndSendOffer().catch(console.error);
+            break;
+
+        case 'FROM_WS_TO_OFFSCREEN':
+            handleSignaling(message.payload).catch(console.error);
+            break;
     }
     return false;
 });
 
 async function captureAudio(streamId: string) {
     try {
-        // Usamos la API de tabCapture con el streamId que nos dio el Background
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 mandatory: {
@@ -39,7 +43,7 @@ async function captureAudio(streamId: string) {
         
         console.log('🎤 Audio capturado con éxito.');
         
-        // Conectamos a los altavoces locales para que el usuario escuche lo que transmite
+        // Conexión local para monitoreo
         const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(localStream);
         source.connect(audioContext.destination);
@@ -49,7 +53,6 @@ async function captureAudio(streamId: string) {
 }
 
 function setupPeerConnection() {
-    // Si ya existe una conexión, la cerramos antes de crear una nueva
     if (peerConnection) peerConnection.close();
 
     peerConnection = new RTCPeerConnection({ 
@@ -59,19 +62,29 @@ function setupPeerConnection() {
         ] 
     });
 
+    // AÑADIR PISTAS: Fundamental para la bidireccionalidad
     if (localStream) {
-        localStream.getTracks().forEach(track => peerConnection!.addTrack(track, localStream!));
+        localStream.getTracks().forEach(track => {
+            peerConnection!.addTrack(track, localStream!);
+        });
     }
 
+    // ONTRACK: Recibir audio del otro lado
     peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Música entrante mezclándose!');
+        console.log('🎵 ¡Audio remoto recibido!');
         const audioElement = new Audio();
         audioElement.srcObject = event.streams[0];
-        audioElement.play().catch(e => console.error('Error audio:', e));
+        audioElement.play().catch(e => console.error('Error al reproducir remoto:', e));
     };
 
+    // ICE CANDIDATES: Crucial para atravesar firewalls
     peerConnection.onicecandidate = (event) => {
-        if (event.candidate) chrome.runtime.sendMessage({ type: 'FORWARD_TO_WS', payload: { type: 'webrtc_ice_candidate', payload: event.candidate } });
+        if (event.candidate) {
+            chrome.runtime.sendMessage({ 
+                type: 'FORWARD_TO_WS', 
+                payload: { type: 'webrtc_ice_candidate', payload: event.candidate } 
+            });
+        }
     };
 }
 
@@ -79,13 +92,30 @@ async function createAndSendOffer() {
     setupPeerConnection();
     const offer = await peerConnection!.createOffer();
     await peerConnection!.setLocalDescription(offer);
-    chrome.runtime.sendMessage({ type: 'FORWARD_TO_WS', payload: { type: 'webrtc_offer', payload: peerConnection!.localDescription } });
+    chrome.runtime.sendMessage({ 
+        type: 'FORWARD_TO_WS', 
+        payload: { type: 'webrtc_offer', payload: peerConnection!.localDescription } 
+    });
 }
 
-async function handleOffer(offer: RTCSessionDescriptionInit) {
-    setupPeerConnection();
-    await peerConnection!.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection!.createAnswer();
-    await peerConnection!.setLocalDescription(answer);
-    chrome.runtime.sendMessage({ type: 'FORWARD_TO_WS', payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } });
+async function handleSignaling(data: any) {
+    if (!peerConnection) setupPeerConnection();
+
+    switch (data.type) {
+        case 'webrtc_offer':
+            await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
+            const answer = await peerConnection!.createAnswer();
+            await peerConnection!.setLocalDescription(answer);
+            chrome.runtime.sendMessage({ 
+                type: 'FORWARD_TO_WS', 
+                payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } 
+            });
+            break;
+        case 'webrtc_answer':
+            await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
+            break;
+        case 'webrtc_ice_candidate':
+            await peerConnection!.addIceCandidate(new RTCIceCandidate(data.payload));
+            break;
+    }
 }
