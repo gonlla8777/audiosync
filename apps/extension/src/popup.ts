@@ -32,3 +32,17 @@ chrome.runtime.onMessage.addListener((message) => {
         statusDiv.innerText = 'ESCUCHANDO 🎵';
     }
 });
+
+const btnRestart = document.getElementById('btnRestart');
+
+btnRestart?.addEventListener('click', () => {
+    statusDiv!.innerText = 'REINICIANDO...';
+    // Enviamos la orden al background
+    chrome.runtime.sendMessage({ type: 'POPUP_RESTART' });
+    
+    // Pequeña espera para que reconecte
+    setTimeout(() => {
+        statusDiv!.innerText = 'LISTO PARA HOST';
+        (btnHost as HTMLButtonElement).disabled = false;
+    }, 2000);
+});

@@ -1,95 +1,97 @@
-import { SignalingMessage } from 'shared-types';
+/**
+ * background.ts - El cerebro de la extensión
+ * Gestiona el WebSocket (con reconexión automática) y el motor de audio.
+ */
 
-console.log('AudioSync Background Worker iniciado');
+let ws: WebSocket | null = null;
+const SERVER_URL = 'wss://audiosync-3q4m.onrender.com';
 
-const ws = new WebSocket('wss://audiosync-3q4m.onrender.com');
-let isCapturing = false;
+// 1. Iniciar conexión con el servidor
+function conectarWS() {
+    console.log('🔗 Intentando conectar al servidor...');
+    ws = new WebSocket(SERVER_URL);
 
-ws.onopen = () => console.log('✅ Extensión conectada al Signaling Server.');
+    ws.onopen = () => {
+        console.log('✅ Extensión conectada al Signaling Server.');
+        chrome.runtime.sendMessage({ type: 'WS_CONNECTED' });
+    };
 
-ws.onmessage = (event) => {
-    const data: SignalingMessage = JSON.parse(event.data);
-    
-    if (data.type === 'room_created') {
-        chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId });
-    }
-
-    if ((data.type as string) === 'joined') {
-        chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' });
-    }
-
-    if ((data.type as string) === 'guest_joined') {
-        console.log('👋 Alguien entró a la habitación. Ordenando iniciar WebRTC...');
-        chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' });
-    }
-
-    if (data.type === 'webrtc_answer' || data.type === 'webrtc_ice_candidate' || data.type === 'webrtc_offer') {
-        chrome.runtime.sendMessage({ type: 'FROM_WS_TO_OFFSCREEN', payload: data });
-    }
-};
-
-ws.onerror = (error) => console.error('❌ Error en WebSocket:', error);
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'POPUP_START_HOST') {
-        iniciarMotorAudioHost();
-    }
-
-    if (message.type === 'POPUP_START_GUEST') {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'join_room', roomId: message.roomId }));
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        // Manejo de eventos del servidor
+        if (data.type === 'room_created') {
+            chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId });
+        } else if (data.type === 'joined') {
+            chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' });
+        } else if (data.type === 'guest_joined') {
+            console.log('👋 Invitado unido. Iniciando WebRTC...');
+            chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' });
+        } else if (['webrtc_offer', 'webrtc_answer', 'webrtc_ice_candidate'].includes(data.type)) {
+            chrome.runtime.sendMessage({ type: 'FROM_WS_TO_OFFSCREEN', payload: data });
         }
-        iniciarMotorAudioGuest();
-        // --- NUEVO: Forzamos al invitado a que también inicie el WebRTC ---
-        chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' });
-    }
+    };
 
-    if (message.type === 'FORWARD_TO_WS') {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message.payload));
+    ws.onclose = () => {
+        console.warn('❌ Conexión perdida. Intentando reconectar en 5s...');
+        setTimeout(conectarWS, 5000);
+    };
+
+    ws.onerror = (err) => console.error('Error WebSocket:', err);
+}
+
+// 2. Gestionar eventos de comunicación
+chrome.runtime.onMessage.addListener((message) => {
+    switch (message.type) {
+        case 'POPUP_START_HOST':
+            iniciarMotorAudio('create_room');
+            break;
+
+        case 'POPUP_START_GUEST':
+            iniciarMotorAudio('join_room', message.roomId);
+            break;
+
+        case 'POPUP_RESTART':
+            console.log('🔄 Reiniciando conexión...');
+            if (ws) ws.close(); // Esto disparará la reconexión automática
+            break;
+
+        case 'FORWARD_TO_WS':
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message.payload));
+            }
+            break;
     }
+    return false;
 });
 
+// 3. Orquestador de captura de audio
+async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
+    await asegurarOffscreen();
+    
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        const tab = tabs[0];
+        if (!tab || !tab.id) return;
+        
+        const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+        chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+        }
+    });
+}
+
 async function asegurarOffscreen() {
-    const existingContexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
-    if (existingContexts.length === 0) {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
+    if (contexts.length === 0) {
         await chrome.offscreen.createDocument({
             url: 'offscreen.html',
             reasons: [chrome.offscreen.Reason.USER_MEDIA],
-            justification: 'Motor principal de captura y reproducción de AudioSync'
+            justification: 'Motor de audio bidireccional'
         });
     }
 }
 
-// HOST: Captura su música y LUEGO crea la sala
-async function iniciarMotorAudioHost() {
-    if (isCapturing) return;
-    await asegurarOffscreen();
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (!tab || !tab.id) return;
-        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-            if (streamId) {
-                isCapturing = true;
-                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
-                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'create_room' }));
-            }
-        });
-    });
-}
-
-// GUEST: Ahora el invitado TAMBIÉN captura su música y LUEGO entra a la sala
-async function iniciarMotorAudioGuest(roomId: string) {
-    if (isCapturing) return;
-    await asegurarOffscreen();
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (!tab || !tab.id) return;
-        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-            if (streamId) {
-                isCapturing = true;
-                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
-                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
-            }
-        });
-    });
-}
+// Iniciar al cargar
+conectarWS();
