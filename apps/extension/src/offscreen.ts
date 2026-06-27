@@ -25,11 +25,18 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function captureAudio(streamId: string) {
     try {
+        // --- LIMPIEZA TOTAL ---
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+            localStream = null;
+        }
+        // ----------------------
+
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } } as any,
             video: false
         });
-        console.log('🎤 Audio capturado listo para el tubo.');
+        console.log('🎤 Audio capturado con éxito.');
         
         const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(localStream);
@@ -72,3 +79,4 @@ async function handleOffer(offer: RTCSessionDescriptionInit) {
     await peerConnection!.setLocalDescription(answer);
     chrome.runtime.sendMessage({ type: 'FORWARD_TO_WS', payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } });
 }
+
