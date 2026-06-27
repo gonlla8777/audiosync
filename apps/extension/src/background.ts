@@ -1,8 +1,9 @@
 /**
  * background.ts - El cerebro de la extensión
- * Gestiona el WebSocket (con reconexión automática) y el motor de audio.
+ * Gestiona el WebSocket (con reconexión automática), la memoria de estado y el motor de audio.
  */
 
+let appState: { mode: 'IDLE' | 'HOSTING' | 'GUESTING', roomId: string } = { mode: 'IDLE', roomId: '' };
 let ws: WebSocket | null = null;
 const SERVER_URL = 'wss://audiosync-3q4m.onrender.com';
 
@@ -21,8 +22,10 @@ function conectarWS() {
         
         // Manejo de eventos del servidor
         if (data.type === 'room_created') {
+            appState = { mode: 'HOSTING', roomId: data.roomId }; // Guardamos el estado en memoria
             chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId });
         } else if (data.type === 'joined') {
+            appState.mode = 'GUESTING'; // Guardamos el estado
             chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' });
         } else if (data.type === 'guest_joined') {
             console.log('👋 Invitado unido. Iniciando WebRTC...');
@@ -41,19 +44,28 @@ function conectarWS() {
 }
 
 // 2. Gestionar eventos de comunicación
-chrome.runtime.onMessage.addListener((message) => {
+// Usamos _sender con guion bajo para indicar que es obligatorio por posición pero no lo usamos
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.type) {
+        case 'GET_APP_STATE':
+            // El popup pregunta por el estado al abrirse y se lo devolvemos
+            sendResponse(appState);
+            break;
+
         case 'POPUP_START_HOST':
             iniciarMotorAudio('create_room');
             break;
 
         case 'POPUP_START_GUEST':
+            appState.roomId = message.roomId; // Guardamos el código de sala temporalmente
             iniciarMotorAudio('join_room', message.roomId);
             break;
 
         case 'POPUP_RESTART':
             console.log('🔄 Reiniciando conexión...');
-            if (ws) ws.close(); // Esto disparará la reconexión automática
+            appState = { mode: 'IDLE', roomId: '' }; // Limpiamos la memoria
+            chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }); // Limpiamos el offscreen
+            if (ws) ws.close(); // Cerramos el socket para forzar reconexión
             break;
 
         case 'FORWARD_TO_WS':
@@ -62,7 +74,9 @@ chrome.runtime.onMessage.addListener((message) => {
             }
             break;
     }
-    return false;
+    
+    // Devolvemos false porque nuestra respuesta (sendResponse) es síncrona
+    return false; 
 });
 
 // 3. Orquestador de captura de audio
@@ -93,5 +107,5 @@ async function asegurarOffscreen() {
     }
 }
 
-// Iniciar al cargar
+// Iniciar al cargar la extensión
 conectarWS();
