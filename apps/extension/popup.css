@@ -85,3 +85,37 @@ body {
     border-color: #33004d;
     color: #fff;
 }
+
+/* Estilo para el botón de reinicio */
+#btnRestart {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: transparent;
+    color: #00ff00; /* Color verde neón retro, cámbialo si usas otro */
+    border: 1px solid #00ff00;
+    border-radius: 50%; /* Lo hace un círculo perfecto */
+    width: 32px;
+    height: 32px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 5px rgba(0, 255, 0, 0.2);
+}
+
+/* Efecto al pasar el mouse por encima */
+#btnRestart:hover {
+    background: #00ff00;
+    color: #000000;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.8);
+    transform: rotate(180deg); /* ¡Un pequeño giro visual! */
+}
+
+/* Efecto al hacer clic */
+#btnRestart:active {
+    transform: scale(0.9) rotate(180deg);
+}
