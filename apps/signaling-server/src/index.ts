@@ -2,7 +2,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'crypto';
 import { SignalingMessage } from 'shared-types';
 
-const wss = new WebSocketServer({ port: 8080 });
+// CAMBIO CRÍTICO: Usar el puerto que asigna Render (process.env.PORT)
+const PORT = parseInt(process.env.PORT || '8080');
+
+// CAMBIO CRÍTICO: Escuchar en '0.0.0.0' para aceptar conexiones externas
+const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' });
 
 interface Room {
     host: WebSocket;
@@ -11,12 +15,22 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 
+// Añadimos un pequeño Heartbeat para que Render no "duerma" la conexión
+setInterval(() => {
+    wss.clients.forEach((ws) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+        }
+    });
+}, 30000);
+
 function generateRoomId(): string {
-    return randomBytes(3).toString('hex').toUpperCase(); // Ej: "A1B2C3"
+    return randomBytes(3).toString('hex').toUpperCase();
 }
 
 wss.on('connection', (ws: WebSocket) => {
     let currentRoomId: string | null = null;
+    console.log('✅ Cliente conectado');
 
     ws.on('message', (data: string) => {
         try {
@@ -43,7 +57,6 @@ wss.on('connection', (ws: WebSocket) => {
                     }
                     break;
 
-                // Relay WebRTC messages (Offer, Answer, ICE candidates)
                 case 'webrtc_offer':
                 case 'webrtc_answer':
                 case 'webrtc_ice_candidate':
@@ -71,4 +84,4 @@ wss.on('connection', (ws: WebSocket) => {
     });
 });
 
-console.log('Signaling Server iniciado en puerto 8080');
+console.log(`Signaling Server iniciado en puerto ${PORT}`);
