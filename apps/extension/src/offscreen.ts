@@ -25,6 +25,19 @@ chrome.runtime.onMessage.addListener((message) => {
         case 'FROM_WS_TO_OFFSCREEN':
             handleSignaling(message.payload).catch(console.error);
             break;
+            
+        // --- NUEVA RECOMENDACIÓN: Limpieza total ---
+        case 'RESET_AUDIO':
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            console.log('🧹 Motor de audio reseteado');
+            break;
     }
     return false;
 });

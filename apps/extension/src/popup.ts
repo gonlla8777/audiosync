@@ -4,6 +4,7 @@ const btnHost = document.getElementById('btnHost') as HTMLButtonElement;
 const btnGuest = document.getElementById('btnGuest') as HTMLButtonElement;
 const statusDiv = document.getElementById('status');
 const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
+const btnRestart = document.getElementById('btnRestart');
 
 btnHost?.addEventListener('click', () => {
     btnHost.disabled = true; // Botón de pánico: bloquea clics dobles
@@ -33,7 +34,7 @@ chrome.runtime.onMessage.addListener((message) => {
     }
 });
 
-const btnRestart = document.getElementById('btnRestart');
+
 
 btnRestart?.addEventListener('click', () => {
     statusDiv!.innerText = 'REINICIANDO...';
