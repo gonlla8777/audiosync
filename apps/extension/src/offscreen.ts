@@ -3,6 +3,7 @@ let localStream: MediaStream | null = null;
 
 chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'START_CAPTURE') {
+        // Limpieza lógica: si ya existe un stream, lo detenemos
         if (localStream) {
             localStream.getTracks().forEach(track => track.stop());
             localStream = null;
@@ -25,19 +26,20 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function captureAudio(streamId: string) {
     try {
-        // --- LIMPIEZA TOTAL ---
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-            localStream = null;
-        }
-        // ----------------------
-
+        // Usamos la API de tabCapture con el streamId que nos dio el Background
         localStream = await navigator.mediaDevices.getUserMedia({
-            audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } } as any,
+            audio: {
+                mandatory: {
+                    chromeMediaSource: 'tab',
+                    chromeMediaSourceId: streamId
+                }
+            } as any,
             video: false
         });
+        
         console.log('🎤 Audio capturado con éxito.');
         
+        // Conectamos a los altavoces locales para que el usuario escuche lo que transmite
         const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(localStream);
         source.connect(audioContext.destination);
@@ -47,7 +49,15 @@ async function captureAudio(streamId: string) {
 }
 
 function setupPeerConnection() {
-    peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    // Si ya existe una conexión, la cerramos antes de crear una nueva
+    if (peerConnection) peerConnection.close();
+
+    peerConnection = new RTCPeerConnection({ 
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ] 
+    });
 
     if (localStream) {
         localStream.getTracks().forEach(track => peerConnection!.addTrack(track, localStream!));
@@ -79,4 +89,3 @@ async function handleOffer(offer: RTCSessionDescriptionInit) {
     await peerConnection!.setLocalDescription(answer);
     chrome.runtime.sendMessage({ type: 'FORWARD_TO_WS', payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } });
 }
-
