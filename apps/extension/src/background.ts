@@ -3,7 +3,7 @@ import { SignalingMessage } from 'shared-types';
 console.log('AudioSync Background Worker iniciado');
 
 const ws = new WebSocket('wss://audiosync-3q4m.onrender.com');
-let isCapturing = false; // NUEVO: Candado de seguridad para evitar capturas dobles
+let isCapturing = false;
 
 ws.onopen = () => console.log('✅ Extensión conectada al Signaling Server.');
 
@@ -14,17 +14,17 @@ ws.onmessage = (event) => {
         chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId });
     }
 
-    // ARREGLO TYPESCRIPT: Forzamos la lectura como string para evitar el error TS2367
+    if ((data.type as string) === 'joined') {
+        chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' });
+    }
+
     if ((data.type as string) === 'guest_joined') {
-        console.log('👋 Invitado detectado en la sala. Ordenando iniciar WebRTC...');
+        console.log('👋 Alguien entró a la habitación. Ordenando iniciar WebRTC...');
         chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' });
     }
 
     if (data.type === 'webrtc_answer' || data.type === 'webrtc_ice_candidate' || data.type === 'webrtc_offer') {
         chrome.runtime.sendMessage({ type: 'FROM_WS_TO_OFFSCREEN', payload: data });
-    }
-    if ((data.type as string) === 'joined') {
-        chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' });
     }
 };
 
@@ -32,13 +32,16 @@ ws.onerror = (error) => console.error('❌ Error en WebSocket:', error);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'POPUP_START_HOST') {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'create_room' }));
         iniciarMotorAudioHost();
     }
 
     if (message.type === 'POPUP_START_GUEST') {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'join_room', roomId: message.roomId }));
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'join_room', roomId: message.roomId }));
+        }
         iniciarMotorAudioGuest();
+        // --- NUEVO: Forzamos al invitado a que también inicie el WebRTC ---
+        chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' });
     }
 
     if (message.type === 'FORWARD_TO_WS') {
@@ -57,26 +60,36 @@ async function asegurarOffscreen() {
     }
 }
 
+// HOST: Captura su música y LUEGO crea la sala
 async function iniciarMotorAudioHost() {
-    if (isCapturing) {
-        console.warn('⚠️ La pestaña ya está siendo capturada. Evitando error de Chrome.');
-        return;
-    }
-
+    if (isCapturing) return;
     await asegurarOffscreen();
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs[0];
         if (!tab || !tab.id) return;
         chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
             if (streamId) {
-                isCapturing = true; // Cerramos el candado
+                isCapturing = true;
                 chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
+                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'create_room' }));
             }
         });
     });
 }
 
-async function iniciarMotorAudioGuest() {
+// GUEST: Ahora el invitado TAMBIÉN captura su música y LUEGO entra a la sala
+async function iniciarMotorAudioGuest(roomId: string) {
+    if (isCapturing) return;
     await asegurarOffscreen();
-    chrome.runtime.sendMessage({ type: 'START_GUEST_MODE' });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+        if (!tab || !tab.id) return;
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+            if (streamId) {
+                isCapturing = true;
+                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
+                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
+            }
+        });
+    });
 }
