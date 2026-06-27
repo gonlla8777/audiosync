@@ -2,7 +2,7 @@ import { SignalingMessage } from 'shared-types';
 
 console.log('AudioSync Background Worker iniciado');
 
-const ws = new WebSocket('ws://localhost:8080');
+const ws = new WebSocket('wss://audiosync-3q4m.onrender.com');
 let isCapturing = false; // NUEVO: Candado de seguridad para evitar capturas dobles
 
 ws.onopen = () => console.log('✅ Extensión conectada al Signaling Server.');
