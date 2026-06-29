@@ -1,5 +1,6 @@
 /**
- * offscreen.ts - Motor de audio y WebRTC (Optimizado)
+ * offscreen.ts - Motor de audio y WebRTC (Definitivo)
+ * Soluciona: Auto-mute, Conexiones Zombi y Sincronización de Tracks.
  */
 
 let peerConnection: RTCPeerConnection | null = null;
@@ -30,11 +31,13 @@ chrome.runtime.onMessage.addListener((message) => {
                 localStream = null;
             }
             if (peerConnection) {
+                // SOLUCIÓN 3 (Zombies): Extirpamos las pistas antes de matar la conexión
+                peerConnection.getSenders().forEach(sender => peerConnection!.removeTrack(sender));
                 peerConnection.close();
                 peerConnection = null;
             }
             iceQueue = [];
-            console.log('🧹 Motor de audio reseteado');
+            console.log('🧹 Motor de audio reseteado limpiamente.');
             break;
     }
     return false;
@@ -51,14 +54,23 @@ async function captureAudio(streamId: string) {
             } as any,
             video: false
         });
-        console.log('🎤 Audio capturado con éxito.');
+        
+        // SOLUCIÓN 2 (Track State): Asegurarnos de que no nazca silenciado
+        localStream.getTracks().forEach(track => {
+            track.enabled = true; 
+            console.log(`🎤 Track capturado: ${track.kind} | Habilitado: ${track.enabled} | Muteado: ${track.muted}`);
+        });
+        
     } catch (error) {
         console.error('❌ Error capturando:', error);
     }
 }
 
 function setupPeerConnection() {
-    if (peerConnection) peerConnection.close();
+    if (peerConnection) {
+        peerConnection.getSenders().forEach(s => peerConnection!.removeTrack(s));
+        peerConnection.close();
+    }
     iceQueue = []; 
 
     peerConnection = new RTCPeerConnection({ 
@@ -68,21 +80,42 @@ function setupPeerConnection() {
         ] 
     });
 
-    // Añadimos las pistas ANTES de crear la oferta/respuesta
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
         });
-        console.log('✅ Pistas de audio añadidas a la conexión WebRTC');
+        console.log('✅ Pistas de audio inyectadas en WebRTC.');
     }
 
     peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Audio remoto recibido!');
-        const audioCtx = new AudioContext();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        console.log('🎵 ¡Audio remoto recibido! Intentando reproducir...');
         
-        const source = audioCtx.createMediaStreamSource(event.streams[0]);
-        source.connect(audioCtx.destination);
+        // SOLUCIÓN 1 (Auto-Mute): Ataque a dos frentes para saltar el bloqueo de Chrome
+        
+        // Frente A: HTML5 Audio tradicional
+        try {
+            const audioElement = new Audio();
+            audioElement.srcObject = event.streams[0];
+            audioElement.autoplay = true;
+            audioElement.play().then(() => {
+                console.log('🔊 Reproducción HTML5 exitosa.');
+            }).catch(e => console.error('Bloqueo HTML5:', e));
+        } catch (e) {
+            console.error('Fallo en Frente A:', e);
+        }
+
+        // Frente B: Web Audio API (Más potente en extensiones)
+        try {
+            const audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume().then(() => console.log('⚡ AudioContext reanudado forzosamente.'));
+            }
+            const source = audioCtx.createMediaStreamSource(event.streams[0]);
+            source.connect(audioCtx.destination);
+            console.log('🔊 Enrutamiento Web Audio API conectado.');
+        } catch (err) {
+            console.error('Bloqueo Web Audio API:', err);
+        }
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -98,7 +131,7 @@ function setupPeerConnection() {
 async function createAndSendOffer() {
     setupPeerConnection();
     
-    // Fuerza la negociación de audio
+    // Forzamos explícitamente la apertura del canal de audio
     const offer = await peerConnection!.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false
@@ -110,7 +143,6 @@ async function createAndSendOffer() {
         type: 'FORWARD_TO_WS', 
         payload: { type: 'webrtc_offer', payload: peerConnection!.localDescription } 
     });
-    console.log('🚀 Oferta WebRTC enviada con pistas de audio.');
 }
 
 async function handleSignaling(data: any) {
