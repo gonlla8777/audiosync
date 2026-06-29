@@ -1,12 +1,11 @@
 /**
- * offscreen.ts - Motor de audio y WebRTC (Definitivo)
+ * offscreen.ts - Motor de audio y WebRTC (Optimizado y Limpio)
  */
 
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
 let iceQueue: RTCIceCandidateInit[] = [];
 
-// Variables globales
 let remoteAudioElement: HTMLAudioElement | null = null;
 let localAudioContext: AudioContext | null = null;
 
@@ -41,7 +40,7 @@ chrome.runtime.onMessage.addListener((message) => {
             if (remoteAudioElement) {
                 remoteAudioElement.pause();
                 remoteAudioElement.srcObject = null;
-                remoteAudioElement.remove(); // Limpiamos el HTML para no dejar basura
+                remoteAudioElement.remove(); 
             }
             iceQueue = [];
             console.log('🧹 Motor de audio reseteado limpiamente.');
@@ -62,11 +61,8 @@ async function captureAudio(streamId: string) {
             video: false
         });
         
-        localStream.getTracks().forEach(track => {
-            track.enabled = true; 
-        });
+        localStream.getTracks().forEach(track => { track.enabled = true; });
 
-        // Loopback para que el Host no pierda el sonido de su propio video
         localAudioContext = new AudioContext();
         const localSource = localAudioContext.createMediaStreamSource(localStream);
         localSource.connect(localAudioContext.destination);
@@ -91,9 +87,7 @@ function setupPeerConnection() {
         ] 
     });
 
-    // TRUCO PRO: Forzar a WebRTC a abrir un canal bidireccional de audio sí o sí
-    peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
-
+    // Añadimos solo la pista real, sin transceivers fantasmas
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
@@ -102,27 +96,28 @@ function setupPeerConnection() {
     }
 
     peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Audio remoto recibido! Reproduciendo...');
+        console.log('🎵 ¡Audio remoto recibido! Ensamblando reproductor...');
         
-        // SOLUCIÓN: Crear el reproductor y ATORNILLARLO al HTML (DOM)
         remoteAudioElement = document.createElement('audio');
         remoteAudioElement.srcObject = event.streams[0];
         remoteAudioElement.autoplay = true;
-        document.body.appendChild(remoteAudioElement); // <-- LA MAGIA OCURRE AQUÍ
+        document.body.appendChild(remoteAudioElement); 
         
         remoteAudioElement.play().then(() => {
-            console.log('🔊 Reproducción remota iniciada con éxito.');
+            console.log('🔊 Reproducción remota iniciada con éxito en HTML5.');
         }).catch(e => {
-            console.error('⚠️ Bloqueo detectado, forzando con Web Audio API...', e);
+            console.error('⚠️ Bloqueo HTML5 detectado. Intentando Web Audio API...', e);
             const audioCtx = new AudioContext();
             if (audioCtx.state === 'suspended') audioCtx.resume();
             const source = audioCtx.createMediaStreamSource(event.streams[0]);
             source.connect(audioCtx.destination);
+            console.log('🔊 Web Audio API conectado.');
         });
     };
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
+            console.log('📦 Enviando coordenada de red (ICE Candidate)');
             chrome.runtime.sendMessage({ 
                 type: 'FORWARD_TO_WS', 
                 payload: { type: 'webrtc_ice_candidate', payload: event.candidate } 
@@ -140,6 +135,7 @@ async function createAndSendOffer() {
     });
     
     await peerConnection!.setLocalDescription(offer);
+    console.log('🚀 Oferta WebRTC creada y enviada.');
     
     chrome.runtime.sendMessage({ 
         type: 'FORWARD_TO_WS', 
@@ -148,6 +144,8 @@ async function createAndSendOffer() {
 }
 
 async function handleSignaling(data: any) {
+    console.log(`📡 Señal WebRTC recibida del servidor: ${data.type}`);
+    
     if (!peerConnection) setupPeerConnection();
 
     switch (data.type) {
@@ -159,11 +157,13 @@ async function handleSignaling(data: any) {
                 type: 'FORWARD_TO_WS', 
                 payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } 
             });
+            console.log('📨 Respuesta WebRTC (Answer) enviada.');
             procesarColaIce();
             break;
 
         case 'webrtc_answer':
             await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
+            console.log('🤝 Conexión WebRTC establecida con la respuesta.');
             procesarColaIce();
             break;
 
