@@ -7,9 +7,13 @@ let ws: WebSocket | null = null;
 const SERVER_URL = 'wss://audiosync-3q4m.onrender.com';
 
 function conectarWS() {
+    // Si ya existe un socket intentando abrirse, no crees otro
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+        return; 
+    }
+    
     console.log('🔗 Intentando conectar al servidor...');
     ws = new WebSocket(SERVER_URL);
-
     ws.onopen = () => {
         console.log('✅ Extensión conectada al Signaling Server.');
         chrome.runtime.sendMessage({ type: 'WS_CONNECTED' }).catch(() => {});
