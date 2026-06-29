@@ -5,6 +5,7 @@
 
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
+let iceQueue: RTCIceCandidateInit[] = []; // NUEVO: Sala de espera para coordenadas de red
 
 chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
@@ -33,6 +34,7 @@ chrome.runtime.onMessage.addListener((message) => {
                 peerConnection.close();
                 peerConnection = null;
             }
+            iceQueue = []; // Limpiamos la sala de espera
             console.log('🧹 Motor de audio reseteado');
             break;
     }
@@ -52,9 +54,7 @@ async function captureAudio(streamId: string) {
         });
         
         console.log('🎤 Audio capturado con éxito.');
-        const audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(localStream);
-        source.connect(audioContext.destination);
+        // Nota: Silenciamos el eco local. El Host no necesita escucharse a sí mismo doble.
     } catch (error) {
         console.error('❌ Error capturando:', error);
     }
@@ -62,6 +62,7 @@ async function captureAudio(streamId: string) {
 
 function setupPeerConnection() {
     if (peerConnection) peerConnection.close();
+    iceQueue = []; 
 
     peerConnection = new RTCPeerConnection({ 
         iceServers: [
@@ -78,9 +79,16 @@ function setupPeerConnection() {
 
     peerConnection.ontrack = (event) => {
         console.log('🎵 ¡Audio remoto recibido!');
-        const audioElement = new Audio();
-        audioElement.srcObject = event.streams[0];
-        audioElement.play().catch(e => console.error('Error al reproducir remoto:', e));
+        
+        // NUEVO: Usamos Web Audio API para evitar el bloqueo silencioso de Chrome
+        try {
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(event.streams[0]);
+            source.connect(audioCtx.destination);
+            console.log('🔊 Reproduciendo audio sin bloqueos.');
+        } catch (err) {
+            console.error('Error en Web Audio API:', err);
+        }
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -115,12 +123,32 @@ async function handleSignaling(data: any) {
                 type: 'FORWARD_TO_WS', 
                 payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } 
             });
+            procesarColaIce();
             break;
+
         case 'webrtc_answer':
             await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
+            procesarColaIce();
             break;
+
         case 'webrtc_ice_candidate':
-            await peerConnection!.addIceCandidate(new RTCIceCandidate(data.payload));
+            // NUEVO: Control de tráfico de paquetes
+            if (peerConnection!.remoteDescription) {
+                await peerConnection!.addIceCandidate(new RTCIceCandidate(data.payload)).catch(console.error);
+            } else {
+                console.log('⏳ Guardando paquete de red en espera...');
+                iceQueue.push(data.payload);
+            }
             break;
+    }
+}
+
+// NUEVO: Inyecta los paquetes de red guardados en el momento exacto
+function procesarColaIce() {
+    while (iceQueue.length > 0) {
+        const candidate = iceQueue.shift();
+        if (candidate) {
+            peerConnection!.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+        }
     }
 }
