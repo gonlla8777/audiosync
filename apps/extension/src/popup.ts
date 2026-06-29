@@ -1,68 +1,72 @@
-console.log('Control Remoto Retro Iniciado');
+// Envolvemos todo para asegurar que el HTML cargó primero
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('💻 Interfaz Retro cargada. Consultando memoria...');
 
-const btnHost = document.getElementById('btnHost') as HTMLButtonElement;
-const btnGuest = document.getElementById('btnGuest') as HTMLButtonElement;
-const statusDiv = document.getElementById('status');
-const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
-const btnRestart = document.getElementById('btnRestart');
+    const btnHost = document.getElementById('btnHost') as HTMLButtonElement;
+    const btnGuest = document.getElementById('btnGuest') as HTMLButtonElement;
+    const statusDiv = document.getElementById('status');
+    const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
+    const btnRestart = document.getElementById('btnRestart');
 
-// --- NUEVA RECUPERACIÓN DE ESTADO (A prueba de balas) ---
-// Esto lee directamente de la memoria de Chrome apenas abres el popup
-chrome.storage.local.get(['appState'], (result) => {
-    const state = result.appState;
-    if (state && state.mode !== 'IDLE') {
-        if (state.mode === 'HOSTING') {
-            if (statusDiv) statusDiv.innerText = 'COMPARTIENDO';
-        } else if (state.mode === 'GUESTING') {
-            if (statusDiv) statusDiv.innerText = 'ESCUCHANDO 🎵';
+    // --- LECTURA DE MEMORIA A PRUEBA DE BALAS ---
+    chrome.storage.local.get(['appState'], (result) => {
+        console.log('🧠 Estado en disco duro:', result.appState); // Diagnóstico vital
+        
+        const state = result.appState;
+        if (state && state.mode !== 'IDLE') {
+            if (state.mode === 'HOSTING') {
+                if (statusDiv) statusDiv.innerText = 'COMPARTIENDO';
+            } else if (state.mode === 'GUESTING') {
+                if (statusDiv) statusDiv.innerText = 'ESCUCHANDO 🎵';
+            }
+            
+            // Restauramos el código y bloqueamos botones
+            if (roomCodeInput) roomCodeInput.value = state.roomId;
+            if (btnHost) btnHost.disabled = true;
+            if (btnGuest) btnGuest.disabled = true;
+        }
+    });
+    // --------------------------------------------
+
+    btnHost?.addEventListener('click', () => {
+        btnHost.disabled = true;
+        if (btnGuest) btnGuest.disabled = true;
+        if (statusDiv) statusDiv.innerText = 'INICIANDO HOST...';
+        chrome.runtime.sendMessage({ type: 'POPUP_START_HOST' });
+    });
+
+    btnGuest?.addEventListener('click', () => {
+        const code = roomCodeInput?.value.trim().toUpperCase();
+        if (!code) {
+            if (statusDiv) statusDiv.innerText = 'FALTA CÓDIGO';
+            return;
+        }
+        btnGuest.disabled = true;
+        if (btnHost) btnHost.disabled = true;
+        if (statusDiv) statusDiv.innerText = `CONECTANDO A: ${code}`;
+        chrome.runtime.sendMessage({ type: 'POPUP_START_GUEST', roomId: code });
+    });
+
+    btnRestart?.addEventListener('click', () => {
+        if (statusDiv) statusDiv.innerText = 'REINICIANDO...';
+        chrome.runtime.sendMessage({ type: 'POPUP_RESTART' });
+        
+        setTimeout(() => {
+            if (statusDiv) statusDiv.innerText = 'LISTO PARA CONECTAR';
+            if (btnHost) btnHost.disabled = false;
+            if (btnGuest) btnGuest.disabled = false;
+            if (roomCodeInput) roomCodeInput.value = '';
+        }, 2000);
+    });
+
+    chrome.runtime.onMessage.addListener((message) => {
+        if (message.type === 'ROOM_CREATED_UPDATE_UI' && statusDiv && roomCodeInput) {
+            statusDiv.innerText = 'COMPARTIENDO';
+            roomCodeInput.value = message.roomId;
         }
         
-        // Restauramos el código y bloqueamos botones
-        if (roomCodeInput) roomCodeInput.value = state.roomId;
-        if (btnHost) btnHost.disabled = true;
-        if (btnGuest) btnGuest.disabled = true;
-    }
-});
-// --------------------------------------------------------
-
-btnHost?.addEventListener('click', () => {
-    btnHost.disabled = true;
-    if (btnGuest) btnGuest.disabled = true;
-    if (statusDiv) statusDiv.innerText = 'INICIANDO HOST...';
-    chrome.runtime.sendMessage({ type: 'POPUP_START_HOST' });
-});
-
-btnGuest?.addEventListener('click', () => {
-    const code = roomCodeInput?.value.trim().toUpperCase();
-    if (!code) {
-        if (statusDiv) statusDiv.innerText = 'FALTA CÓDIGO';
-        return;
-    }
-    btnGuest.disabled = true;
-    if (btnHost) btnHost.disabled = true;
-    if (statusDiv) statusDiv.innerText = `CONECTANDO A: ${code}`;
-    chrome.runtime.sendMessage({ type: 'POPUP_START_GUEST', roomId: code });
-});
-
-btnRestart?.addEventListener('click', () => {
-    if (statusDiv) statusDiv.innerText = 'REINICIANDO...';
-    chrome.runtime.sendMessage({ type: 'POPUP_RESTART' });
-    
-    setTimeout(() => {
-        if (statusDiv) statusDiv.innerText = 'LISTO PARA CONECTAR';
-        if (btnHost) btnHost.disabled = false;
-        if (btnGuest) btnGuest.disabled = false;
-        if (roomCodeInput) roomCodeInput.value = '';
-    }, 2000);
-});
-
-chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'ROOM_CREATED_UPDATE_UI' && statusDiv && roomCodeInput) {
-        statusDiv.innerText = 'COMPARTIENDO';
-        roomCodeInput.value = message.roomId;
-    }
-    
-    if (message.type === 'GUEST_JOINED_UPDATE_UI' && statusDiv) {
-        statusDiv.innerText = 'ESCUCHANDO 🎵';
-    }
+        if (message.type === 'GUEST_JOINED_UPDATE_UI' && statusDiv) {
+            statusDiv.innerText = 'ESCUCHANDO 🎵';
+        }
+    });
 });
