@@ -76,16 +76,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
     
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs[0];
         if (!tab || !tab.id) return;
         
-        const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-        chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
-        
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
-        }
+        // CORRECCIÓN: Usamos el callback que exige TypeScript en lugar de await
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+            if (streamId) {
+                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId });
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+                }
+            } else {
+                console.error('No se pudo obtener el streamId de la pestaña.');
+            }
+        });
     });
 }
 
