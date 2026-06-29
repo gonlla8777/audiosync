@@ -87,12 +87,16 @@ function setupPeerConnection() {
         ] 
     });
 
-    // Añadimos solo la pista real, sin transceivers fantasmas
     if (localStream) {
+        // HOST: Envía el audio
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
         });
         console.log('✅ Pistas de audio inyectadas en WebRTC.');
+    } else {
+        // GUEST: Le decimos a WebRTC que abra el canal solo para recibir
+        peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+        console.log('🎧 Modo Invitado: Preparado para solo recibir.');
     }
 
     peerConnection.ontrack = (event) => {

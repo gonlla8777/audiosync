@@ -59,45 +59,57 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
             chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
             
-            // Cierra correctamente
             if (ws) {
                 ws.onclose = null; 
                 ws.close();
-                ws = null; // IMPORTANTE: Asegúrate de limpiar la variable
+                ws = null; 
             }
-            // Reconecta de forma limpia
             conectarWS(); 
+            break;
+
+        // CORRECCIÓN 2: Le pegamos el RoomID a todos los paquetes WebRTC
+        case 'FORWARD_TO_WS':
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                chrome.storage.local.get(['appState'], (result) => {
+                    const roomId = result.appState?.roomId;
+                    const finalPayload = { ...message.payload, roomId: roomId };
+                    ws!.send(JSON.stringify(finalPayload));
+                });
+            }
             break;
     }
     return false; 
 });
 
-// 3. Orquestador de captura de audio
+// CORRECCIÓN 1: El Host graba, el Guest solo escucha.
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
     
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (!tab || !tab.id) return;
-        
-        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-            if (streamId) {
-                // 1. Le decimos al Offscreen que empiece a capturar el audio
-                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
-                
-                // 2. MAGIA: Esperamos 1 segundo completo para que el audio esté listo 
-                // ANTES de avisarle al servidor de Render que nos unimos.
-                setTimeout(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
-                    }
-                }, 1000);
-
-            } else {
-                console.error('No se pudo obtener el streamId de la pestaña.');
-            }
+    if (tipoAccion === 'create_room') {
+        // Lógica exclusiva del HOST
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const tab = tabs[0];
+            if (!tab || !tab.id) return;
+            
+            chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+                if (streamId) {
+                    chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
+                    setTimeout(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+                        }
+                    }, 1000);
+                } else {
+                    console.error('No se pudo obtener el streamId de la pestaña.');
+                }
+            });
         });
-    });
+    } else {
+        // Lógica exclusiva del GUEST (Se une inmediatamente sin capturar microfono)
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+        }
+    }
 }
 
 async function asegurarOffscreen() {
