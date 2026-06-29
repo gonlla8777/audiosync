@@ -1,11 +1,14 @@
 /**
  * offscreen.ts - Motor de audio y WebRTC (Definitivo)
- * Soluciona: Auto-mute, Conexiones Zombi y Sincronización de Tracks.
  */
 
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
 let iceQueue: RTCIceCandidateInit[] = [];
+
+// Variables globales para evitar que Chrome elimine el audio de la memoria (Garbage Collection)
+let remoteAudioElement: HTMLAudioElement | null = null;
+let localAudioContext: AudioContext | null = null;
 
 chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
@@ -31,10 +34,13 @@ chrome.runtime.onMessage.addListener((message) => {
                 localStream = null;
             }
             if (peerConnection) {
-                // SOLUCIÓN 3 (Zombies): Extirpamos las pistas antes de matar la conexión
                 peerConnection.getSenders().forEach(sender => peerConnection!.removeTrack(sender));
                 peerConnection.close();
                 peerConnection = null;
+            }
+            if (remoteAudioElement) {
+                remoteAudioElement.pause();
+                remoteAudioElement.srcObject = null;
             }
             iceQueue = [];
             console.log('🧹 Motor de audio reseteado limpiamente.');
@@ -55,11 +61,17 @@ async function captureAudio(streamId: string) {
             video: false
         });
         
-        // SOLUCIÓN 2 (Track State): Asegurarnos de que no nazca silenciado
+        // 1. Evitar que el micrófono nazca silenciado
         localStream.getTracks().forEach(track => {
             track.enabled = true; 
-            console.log(`🎤 Track capturado: ${track.kind} | Habilitado: ${track.enabled} | Muteado: ${track.muted}`);
         });
+
+        // 2. SOLUCIÓN AL MUTEO DEL HOST: Devolver el audio a los altavoces locales
+        // Como tabCapture extrae el audio de la pestaña, lo reconectamos para que tú también lo escuches
+        localAudioContext = new AudioContext();
+        const localSource = localAudioContext.createMediaStreamSource(localStream);
+        localSource.connect(localAudioContext.destination);
+        console.log('🎤 Audio capturado y devuelto a los altavoces locales.');
         
     } catch (error) {
         console.error('❌ Error capturando:', error);
@@ -88,34 +100,23 @@ function setupPeerConnection() {
     }
 
     peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Audio remoto recibido! Intentando reproducir...');
+        console.log('🎵 ¡Audio remoto recibido! Reproduciendo...');
         
-        // SOLUCIÓN 1 (Auto-Mute): Ataque a dos frentes para saltar el bloqueo de Chrome
+        // SOLUCIÓN AL GUEST MUDO: Usamos una variable global para que Chrome no borre el audio
+        remoteAudioElement = new Audio();
+        remoteAudioElement.srcObject = event.streams[0];
+        remoteAudioElement.autoplay = true;
         
-        // Frente A: HTML5 Audio tradicional
-        try {
-            const audioElement = new Audio();
-            audioElement.srcObject = event.streams[0];
-            audioElement.autoplay = true;
-            audioElement.play().then(() => {
-                console.log('🔊 Reproducción HTML5 exitosa.');
-            }).catch(e => console.error('Bloqueo HTML5:', e));
-        } catch (e) {
-            console.error('Fallo en Frente A:', e);
-        }
-
-        // Frente B: Web Audio API (Más potente en extensiones)
-        try {
+        remoteAudioElement.play().then(() => {
+            console.log('🔊 Reproducción remota iniciada con éxito.');
+        }).catch(e => {
+            console.error('⚠️ Bloqueo de reproducción detectado, intentando Web Audio API...', e);
+            // Respaldo con Web Audio API si HTML5 falla
             const audioCtx = new AudioContext();
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume().then(() => console.log('⚡ AudioContext reanudado forzosamente.'));
-            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             const source = audioCtx.createMediaStreamSource(event.streams[0]);
             source.connect(audioCtx.destination);
-            console.log('🔊 Enrutamiento Web Audio API conectado.');
-        } catch (err) {
-            console.error('Bloqueo Web Audio API:', err);
-        }
+        });
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -131,7 +132,6 @@ function setupPeerConnection() {
 async function createAndSendOffer() {
     setupPeerConnection();
     
-    // Forzamos explícitamente la apertura del canal de audio
     const offer = await peerConnection!.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false
