@@ -6,9 +6,7 @@
     <title>AudioSync Retro</title>
 </head>
 <body>
-    <button id="btnPowerOff" style="background-color: #ff4c4c; color: white; margin-top: 10px;">
-    🛑 APAGAR TRANSMISIÓN
-</button>
+
     <div class="player-body">
         <div class="screen">
             <div id="status">LISTO...</div>
@@ -19,7 +17,17 @@
             <button id="btnHost" class="btn play-btn">▶ HOST</button>
             <button id="btnGuest" class="btn">🎧 GUEST</button>
             <button id="btnRestart" class="btn-icon" title="Reiniciar conexión">↻</button>
+                <button id="btnPowerOff" style="background-color: #ff4c4c; color: white; margin-top: 10px;">
+    🛑 APAGAR TRANSMISIÓN
+</button>
         </div>
+        <div style="margin-top: 15px; text-align: center;">
+    <label for="volumeSlider" style="color: #00ff00; font-family: monospace; font-size: 12px;">
+        VOLUMEN: <span id="volumeValue">100</span>%
+    </label>
+    <br>
+    <input type="range" id="volumeSlider" min="0" max="100" value="100" style="width: 80%; cursor: pointer;">
+</div>
     </div>
     
     <script type="module" src="dist/popup.js"></script>

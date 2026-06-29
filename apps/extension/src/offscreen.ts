@@ -1,5 +1,5 @@
 /**
- * offscreen.ts - Motor de audio y WebRTC (Optimizado y Limpio)
+ * offscreen.ts - Motor de audio y WebRTC (Optimizado y Limpio con Volumen)
  */
 
 let peerConnection: RTCPeerConnection | null = null;
@@ -8,6 +8,9 @@ let iceQueue: RTCIceCandidateInit[] = [];
 
 let remoteAudioElement: HTMLAudioElement | null = null;
 let localAudioContext: AudioContext | null = null;
+
+let localGainNode: GainNode | null = null;
+let remoteGainNode: GainNode | null = null;
 
 chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
@@ -45,6 +48,16 @@ chrome.runtime.onMessage.addListener((message) => {
             iceQueue = [];
             console.log('🧹 Motor de audio reseteado limpiamente.');
             break;
+
+        case 'SET_VOLUME':
+            // Ajustamos el HTML5 (Para el Guest si Chrome no lo bloquea)
+            if (remoteAudioElement) remoteAudioElement.volume = message.value;
+            // Ajustamos el respaldo Web Audio API (Para el Guest si HTML5 falla)
+            if (remoteGainNode) remoteGainNode.gain.value = message.value;
+            // Ajustamos el loopback local (Para el Host)
+            if (localGainNode) localGainNode.gain.value = message.value;
+            console.log(`🔊 Volumen ajustado a: ${Math.round(message.value * 100)}%`);
+            break;
     }
     return false;
 });
@@ -63,9 +76,13 @@ async function captureAudio(streamId: string) {
         
         localStream.getTracks().forEach(track => { track.enabled = true; });
 
+        // Loopback para el Host con control de volumen (¡Esto lo hiciste perfecto!)
         localAudioContext = new AudioContext();
         const localSource = localAudioContext.createMediaStreamSource(localStream);
-        localSource.connect(localAudioContext.destination);
+        localGainNode = localAudioContext.createGain(); 
+        
+        localSource.connect(localGainNode);
+        localGainNode.connect(localAudioContext.destination);
         console.log('🎤 Audio capturado y devuelto a los altavoces locales.');
         
     } catch (error) {
@@ -113,8 +130,17 @@ function setupPeerConnection() {
             console.error('⚠️ Bloqueo HTML5 detectado. Intentando Web Audio API...', e);
             const audioCtx = new AudioContext();
             if (audioCtx.state === 'suspended') audioCtx.resume();
+            
             const source = audioCtx.createMediaStreamSource(event.streams[0]);
-            source.connect(audioCtx.destination);
+            
+            // --- AQUÍ ESTÁ LA PIEZA QUE FALTABA ---
+            // Creamos la perilla de volumen para el Guest y la conectamos en medio
+            remoteGainNode = audioCtx.createGain();
+            
+            source.connect(remoteGainNode);
+            remoteGainNode.connect(audioCtx.destination);
+            // --------------------------------------
+            
             console.log('🔊 Web Audio API conectado.');
         });
     };

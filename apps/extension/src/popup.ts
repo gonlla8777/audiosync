@@ -12,6 +12,8 @@ console.log('💻 Interfaz Retro cargada. Consultando memoria...');
     // CORRECCIÓN: Le aclaramos a TypeScript que estos dos son botones
     const btnRestart = document.getElementById('btnRestart') as HTMLButtonElement;
     const btnPowerOff = document.getElementById('btnPowerOff') as HTMLButtonElement;
+    const volumeSlider = document.getElementById('volumeSlider') as HTMLInputElement;
+    const volumeValue = document.getElementById('volumeValue') as HTMLSpanElement;
 
     chrome.storage.local.get(['appState'], (result) => {
         console.log('🧠 Estado en disco duro:', result.appState); // Diagnóstico vital
@@ -99,5 +101,15 @@ console.log('💻 Interfaz Retro cargada. Consultando memoria...');
      // Le avisamos al cerebro que mate todo
      chrome.runtime.sendMessage({ type: 'POPUP_POWER_OFF' });
  });
+
+ // NUEVO: Control de volumen en tiempo real
+    volumeSlider?.addEventListener('input', (e) => {
+        const val = (e.target as HTMLInputElement).value;
+        if (volumeValue) volumeValue.innerText = val;
+        
+        // Convertimos el valor de 0-100 a un decimal de 0.0 a 1.0
+        const volumenDecimal = parseInt(val) / 100;
+        chrome.runtime.sendMessage({ type: 'SET_VOLUME', value: volumenDecimal });
+    });
 });
 
