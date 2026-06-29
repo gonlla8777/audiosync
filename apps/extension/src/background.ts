@@ -55,24 +55,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             break;
 
         case 'POPUP_RESTART':
-            console.log('🔄 Reiniciando conexión...');
-            // Limpiamos el disco duro de Chrome
+            console.log('🔄 Reiniciando conexión manual...');
             chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
-            
-            // Limpiamos el motor de audio en el offscreen
             chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
             
+            // Cierra correctamente
             if (ws) {
-                // Anulamos la reconexión de 5s del socket viejo
                 ws.onclose = null; 
-                ws.close(); 
+                ws.close();
+                ws = null; // IMPORTANTE: Asegúrate de limpiar la variable
             }
-            
-            // SOLUCIÓN AL ERROR ROJO: Damos 500ms a Chrome para limpiar la red 
-            // antes de disparar la nueva conexión.
-            setTimeout(() => {
-                conectarWS(); 
-            }, 500);
+            // Reconecta de forma limpia
+            conectarWS(); 
             break;
     }
     return false; 
