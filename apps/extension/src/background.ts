@@ -82,34 +82,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 // CORRECCIÓN 1: El Host graba, el Guest solo escucha.
+// Ambos navegadores capturarán el audio de su pestaña antes de conectar
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
     
-    if (tipoAccion === 'create_room') {
-        // Lógica exclusiva del HOST
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            const tab = tabs[0];
-            if (!tab || !tab.id) return;
-            
-            chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
-                if (streamId) {
-                    chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
-                    setTimeout(() => {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
-                        }
-                    }, 1000);
-                } else {
-                    console.error('No se pudo obtener el streamId de la pestaña.');
-                }
-            });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+        if (!tab || !tab.id) return;
+        
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+            if (streamId) {
+                // Ordenamos capturar el audio sin importar si es Host o Guest
+                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
+                
+                // Esperamos 1 segundo y avisamos al servidor
+                setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+                    }
+                }, 1000);
+            } else {
+                console.error('No se pudo obtener el streamId de la pestaña.');
+            }
         });
-    } else {
-        // Lógica exclusiva del GUEST (Se une inmediatamente sin capturar microfono)
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
-        }
-    }
+    });
 }
 
 async function asegurarOffscreen() {
