@@ -6,8 +6,10 @@ const statusDiv = document.getElementById('status');
 const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
 const btnRestart = document.getElementById('btnRestart');
 
-// --- NUEVO: Recuperación de estado al abrir el popup ---
-chrome.runtime.sendMessage({ type: 'GET_APP_STATE' }, (state) => {
+// --- NUEVA RECUPERACIÓN DE ESTADO (A prueba de balas) ---
+// Esto lee directamente de la memoria de Chrome apenas abres el popup
+chrome.storage.local.get(['appState'], (result) => {
+    const state = result.appState;
     if (state && state.mode !== 'IDLE') {
         if (state.mode === 'HOSTING') {
             if (statusDiv) statusDiv.innerText = 'COMPARTIENDO';
@@ -15,7 +17,7 @@ chrome.runtime.sendMessage({ type: 'GET_APP_STATE' }, (state) => {
             if (statusDiv) statusDiv.innerText = 'ESCUCHANDO 🎵';
         }
         
-        // Bloqueamos los botones para evitar dobles conexiones
+        // Restauramos el código y bloqueamos botones
         if (roomCodeInput) roomCodeInput.value = state.roomId;
         if (btnHost) btnHost.disabled = true;
         if (btnGuest) btnGuest.disabled = true;
