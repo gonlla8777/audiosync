@@ -5,7 +5,9 @@
     "moduleResolution": "node",
     "strict": true,
     "outDir": "./dist",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "types": ["chrome"]
   },
  "include": [
   "src/background.ts",

@@ -1,134 +1,119 @@
 /**
- * offscreen.ts - Motor de audio y WebRTC
- * Gestiona la captura de la pestaña y el túnel P2P.
+ * background.ts - El cerebro de la extensión
+ * Gestiona el WebSocket (con reconexión automática), la memoria persistente y el motor de audio.
  */
 
-let peerConnection: RTCPeerConnection | null = null;
-let localStream: MediaStream | null = null;
+let ws: WebSocket | null = null;
+const SERVER_URL = 'wss://audiosync-3q4m.onrender.com';
 
-chrome.runtime.onMessage.addListener((message) => {
-    switch (message.type) {
-        case 'START_CAPTURE':
-            // Limpieza: si ya existía una captura, la detenemos
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            captureAudio(message.streamId).catch(console.error);
-            break;
+// 1. Iniciar conexión con el servidor
+function conectarWS() {
+    console.log('🔗 Intentando conectar al servidor...');
+    ws = new WebSocket(SERVER_URL);
 
-        case 'START_WEBRTC_OFFER':
-            // Inicia la oferta para conectar
-            createAndSendOffer().catch(console.error);
-            break;
-
-        case 'FROM_WS_TO_OFFSCREEN':
-            handleSignaling(message.payload).catch(console.error);
-            break;
-            
-        // --- NUEVA RECOMENDACIÓN: Limpieza total ---
-        case 'RESET_AUDIO':
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            console.log('🧹 Motor de audio reseteado');
-            break;
-    }
-    return false;
-});
-
-async function captureAudio(streamId: string) {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                mandatory: {
-                    chromeMediaSource: 'tab',
-                    chromeMediaSourceId: streamId
-                }
-            } as any,
-            video: false
-        });
-        
-        console.log('🎤 Audio capturado con éxito.');
-        
-        // Conexión local para monitoreo
-        const audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(localStream);
-        source.connect(audioContext.destination);
-    } catch (error) {
-        console.error('❌ Error capturando:', error);
-    }
-}
-
-function setupPeerConnection() {
-    if (peerConnection) peerConnection.close();
-
-    peerConnection = new RTCPeerConnection({ 
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-        ] 
-    });
-
-    // AÑADIR PISTAS: Fundamental para la bidireccionalidad
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            peerConnection!.addTrack(track, localStream!);
-        });
-    }
-
-    // ONTRACK: Recibir audio del otro lado
-    peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Audio remoto recibido!');
-        const audioElement = new Audio();
-        audioElement.srcObject = event.streams[0];
-        audioElement.play().catch(e => console.error('Error al reproducir remoto:', e));
+    ws.onopen = () => {
+        console.log('✅ Extensión conectada al Signaling Server.');
+        chrome.runtime.sendMessage({ type: 'WS_CONNECTED' }).catch(() => {});
     };
 
-    // ICE CANDIDATES: Crucial para atravesar firewalls
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            chrome.runtime.sendMessage({ 
-                type: 'FORWARD_TO_WS', 
-                payload: { type: 'webrtc_ice_candidate', payload: event.candidate } 
-            });
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        // Manejo de eventos del servidor
+        if (data.type === 'room_created') {
+            // Guardamos en el disco duro de Chrome
+            chrome.storage.local.set({ appState: { mode: 'HOSTING', roomId: data.roomId } }); 
+            chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId }).catch(() => {});
+        } else if (data.type === 'joined') {
+            chrome.runtime.sendMessage({ type: 'GUEST_JOINED_UPDATE_UI' }).catch(() => {});
+        } else if (data.type === 'guest_joined') {
+            console.log('👋 Invitado unido. Iniciando WebRTC...');
+            chrome.runtime.sendMessage({ type: 'START_WEBRTC_OFFER' }).catch(() => {});
+        } else if (['webrtc_offer', 'webrtc_answer', 'webrtc_ice_candidate'].includes(data.type)) {
+            chrome.runtime.sendMessage({ type: 'FROM_WS_TO_OFFSCREEN', payload: data }).catch(() => {});
         }
     };
+
+    ws.onclose = () => {
+        console.warn('❌ Conexión perdida. Intentando reconectar en 5s...');
+        setTimeout(conectarWS, 5000);
+    };
+
+    ws.onerror = (err) => console.error('Error WebSocket:', err);
 }
 
-async function createAndSendOffer() {
-    setupPeerConnection();
-    const offer = await peerConnection!.createOffer();
-    await peerConnection!.setLocalDescription(offer);
-    chrome.runtime.sendMessage({ 
-        type: 'FORWARD_TO_WS', 
-        payload: { type: 'webrtc_offer', payload: peerConnection!.localDescription } 
+// 2. Gestionar eventos de comunicación
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    switch (message.type) {
+        case 'POPUP_START_HOST':
+            iniciarMotorAudio('create_room');
+            break;
+
+        case 'POPUP_START_GUEST':
+            // Guardamos el estado al instante en el disco
+            chrome.storage.local.set({ appState: { mode: 'GUESTING', roomId: message.roomId } }); 
+            iniciarMotorAudio('join_room', message.roomId);
+            break;
+
+        case 'POPUP_RESTART':
+            console.log('🔄 Reiniciando conexión...');
+            // Limpiamos el disco duro de Chrome
+            chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
+            
+            // Atrapamos el error silenciosamente por si el offscreen no existe
+            chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
+            
+            if (ws) {
+                // ANULAMOS el evento onclose temporalmente para saltarnos los 5 segundos de espera
+                ws.onclose = null; 
+                ws.close(); 
+            }
+            // Reconectamos INMEDIATAMENTE
+            conectarWS(); 
+            break;
+
+        case 'FORWARD_TO_WS':
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message.payload));
+            }
+            break;
+    }
+    return false; 
+});
+
+// 3. Orquestador de captura de audio
+async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
+    await asegurarOffscreen();
+    
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+        if (!tab || !tab.id) return;
+        
+        // CORRECCIÓN: Usamos el callback que exige TypeScript en lugar de await
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
+            if (streamId) {
+                chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+                }
+            } else {
+                console.error('No se pudo obtener el streamId de la pestaña.');
+            }
+        });
     });
 }
 
-async function handleSignaling(data: any) {
-    if (!peerConnection) setupPeerConnection();
-
-    switch (data.type) {
-        case 'webrtc_offer':
-            await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
-            const answer = await peerConnection!.createAnswer();
-            await peerConnection!.setLocalDescription(answer);
-            chrome.runtime.sendMessage({ 
-                type: 'FORWARD_TO_WS', 
-                payload: { type: 'webrtc_answer', payload: peerConnection!.localDescription } 
-            });
-            break;
-        case 'webrtc_answer':
-            await peerConnection!.setRemoteDescription(new RTCSessionDescription(data.payload));
-            break;
-        case 'webrtc_ice_candidate':
-            await peerConnection!.addIceCandidate(new RTCIceCandidate(data.payload));
-            break;
+async function asegurarOffscreen() {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
+    if (contexts.length === 0) {
+        await chrome.offscreen.createDocument({
+            url: 'offscreen.html',
+            reasons: [chrome.offscreen.Reason.USER_MEDIA],
+            justification: 'Motor de audio bidireccional'
+        });
     }
 }
+
+// Iniciar al cargar la extensión
+conectarWS();
