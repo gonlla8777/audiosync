@@ -71,6 +71,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false; 
 });
 
+// 3. Orquestador de captura de audio
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
     
@@ -80,11 +81,17 @@ async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId
         
         chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
             if (streamId) {
+                // 1. Le decimos al Offscreen que empiece a capturar el audio
                 chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
                 
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
-                }
+                // 2. MAGIA: Esperamos 1 segundo completo para que el audio esté listo 
+                // ANTES de avisarle al servidor de Render que nos unimos.
+                setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: tipoAccion, roomId: roomId }));
+                    }
+                }, 1000);
+
             } else {
                 console.error('No se pudo obtener el streamId de la pestaña.');
             }
