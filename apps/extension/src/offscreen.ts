@@ -77,19 +77,18 @@ function setupPeerConnection() {
         });
     }
 
-    peerConnection.ontrack = (event) => {
-        console.log('🎵 ¡Audio remoto recibido!');
-        
-        // NUEVO: Usamos Web Audio API para evitar el bloqueo silencioso de Chrome
-        try {
-            const audioCtx = new AudioContext();
-            const source = audioCtx.createMediaStreamSource(event.streams[0]);
-            source.connect(audioCtx.destination);
-            console.log('🔊 Reproduciendo audio sin bloqueos.');
-        } catch (err) {
-            console.error('Error en Web Audio API:', err);
-        }
-    };
+peerConnection.ontrack = (event) => {
+    console.log('🎵 ¡Audio remoto recibido!');
+    const audioCtx = new AudioContext();
+    
+    // Si el navegador bloqueó el audio, esto lo obliga a arrancar
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+    
+    const source = audioCtx.createMediaStreamSource(event.streams[0]);
+    source.connect(audioCtx.destination);
+};
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
