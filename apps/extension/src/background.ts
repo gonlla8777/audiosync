@@ -39,37 +39,73 @@ function conectarWS() {
     ws.onerror = (err) => console.error('Error WebSocket:', err);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+ chrome.runtime.onMessage.addListener((message) => {
+
     switch (message.type) {
-        case 'POPUP_START_HOST':
-            iniciarMotorAudio('create_room');
-            break;
 
-        case 'POPUP_START_GUEST':
-            chrome.storage.local.set({ appState: { mode: 'GUESTING', roomId: message.roomId } }); 
-            iniciarMotorAudio('join_room', message.roomId);
-            break;
+        case 'START_CAPTURE':
 
-        case 'POPUP_RESTART':
-            console.log('🔄 Reiniciando conexión...');
-            chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
-            chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
-            
-            if (ws) {
-                ws.onclose = null; 
-                ws.close(); 
+            // Limpieza: si ya existía una captura, la detenemos
+
+            if (localStream) {
+
+                localStream.getTracks().forEach(track => track.stop());
+
+                localStream = null;
+
             }
-            conectarWS(); 
+
+            captureAudio(message.streamId).catch(console.error);
+
             break;
 
-        case 'FORWARD_TO_WS':
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(message.payload));
-            }
+
+        case 'START_WEBRTC_OFFER':
+
+            // Inicia la oferta para conectar
+
+            createAndSendOffer().catch(console.error);
+
             break;
+
+
+        case 'FROM_WS_TO_OFFSCREEN':
+
+            handleSignaling(message.payload).catch(console.error);
+
+            break;
+
+           
+
+        // --- NUEVA RECOMENDACIÓN: Limpieza total ---
+
+        case 'RESET_AUDIO':
+
+            if (localStream) {
+
+                localStream.getTracks().forEach(track => track.stop());
+
+                localStream = null;
+
+            }
+
+            if (peerConnection) {
+
+                peerConnection.close();
+
+                peerConnection = null;
+
+            }
+
+            console.log('🧹 Motor de audio reseteado');
+
+            break;
+
     }
-    return false; 
-});
+
+    return false;
+
+}); 
 
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
