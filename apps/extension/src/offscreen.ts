@@ -6,7 +6,7 @@ let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
 let iceQueue: RTCIceCandidateInit[] = [];
 
-// Variables globales para evitar que Chrome elimine el audio de la memoria (Garbage Collection)
+// Variables globales
 let remoteAudioElement: HTMLAudioElement | null = null;
 let localAudioContext: AudioContext | null = null;
 
@@ -41,6 +41,7 @@ chrome.runtime.onMessage.addListener((message) => {
             if (remoteAudioElement) {
                 remoteAudioElement.pause();
                 remoteAudioElement.srcObject = null;
+                remoteAudioElement.remove(); // Limpiamos el HTML para no dejar basura
             }
             iceQueue = [];
             console.log('🧹 Motor de audio reseteado limpiamente.');
@@ -61,13 +62,11 @@ async function captureAudio(streamId: string) {
             video: false
         });
         
-        // 1. Evitar que el micrófono nazca silenciado
         localStream.getTracks().forEach(track => {
             track.enabled = true; 
         });
 
-        // 2. SOLUCIÓN AL MUTEO DEL HOST: Devolver el audio a los altavoces locales
-        // Como tabCapture extrae el audio de la pestaña, lo reconectamos para que tú también lo escuches
+        // Loopback para que el Host no pierda el sonido de su propio video
         localAudioContext = new AudioContext();
         const localSource = localAudioContext.createMediaStreamSource(localStream);
         localSource.connect(localAudioContext.destination);
@@ -92,6 +91,9 @@ function setupPeerConnection() {
         ] 
     });
 
+    // TRUCO PRO: Forzar a WebRTC a abrir un canal bidireccional de audio sí o sí
+    peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
@@ -102,16 +104,16 @@ function setupPeerConnection() {
     peerConnection.ontrack = (event) => {
         console.log('🎵 ¡Audio remoto recibido! Reproduciendo...');
         
-        // SOLUCIÓN AL GUEST MUDO: Usamos una variable global para que Chrome no borre el audio
-        remoteAudioElement = new Audio();
+        // SOLUCIÓN: Crear el reproductor y ATORNILLARLO al HTML (DOM)
+        remoteAudioElement = document.createElement('audio');
         remoteAudioElement.srcObject = event.streams[0];
         remoteAudioElement.autoplay = true;
+        document.body.appendChild(remoteAudioElement); // <-- LA MAGIA OCURRE AQUÍ
         
         remoteAudioElement.play().then(() => {
             console.log('🔊 Reproducción remota iniciada con éxito.');
         }).catch(e => {
-            console.error('⚠️ Bloqueo de reproducción detectado, intentando Web Audio API...', e);
-            // Respaldo con Web Audio API si HTML5 falla
+            console.error('⚠️ Bloqueo detectado, forzando con Web Audio API...', e);
             const audioCtx = new AudioContext();
             if (audioCtx.state === 'suspended') audioCtx.resume();
             const source = audioCtx.createMediaStreamSource(event.streams[0]);
