@@ -8,7 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
     const btnRestart = document.getElementById('btnRestart');
 
-    // --- LECTURA DE MEMORIA A PRUEBA DE BALAS ---
     chrome.storage.local.get(['appState'], (result) => {
         console.log('🧠 Estado en disco duro:', result.appState); // Diagnóstico vital
         
