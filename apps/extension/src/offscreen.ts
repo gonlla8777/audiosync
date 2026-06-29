@@ -9,7 +9,6 @@ let localStream: MediaStream | null = null;
 chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
         case 'START_CAPTURE':
-            // Limpieza: si ya existía una captura, la detenemos
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
@@ -18,7 +17,6 @@ chrome.runtime.onMessage.addListener((message) => {
             break;
 
         case 'START_WEBRTC_OFFER':
-            // Inicia la oferta para conectar
             createAndSendOffer().catch(console.error);
             break;
 
@@ -26,7 +24,6 @@ chrome.runtime.onMessage.addListener((message) => {
             handleSignaling(message.payload).catch(console.error);
             break;
             
-        // --- NUEVA RECOMENDACIÓN: Limpieza total ---
         case 'RESET_AUDIO':
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
@@ -55,8 +52,6 @@ async function captureAudio(streamId: string) {
         });
         
         console.log('🎤 Audio capturado con éxito.');
-        
-        // Conexión local para monitoreo
         const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(localStream);
         source.connect(audioContext.destination);
@@ -75,14 +70,12 @@ function setupPeerConnection() {
         ] 
     });
 
-    // AÑADIR PISTAS: Fundamental para la bidireccionalidad
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
         });
     }
 
-    // ONTRACK: Recibir audio del otro lado
     peerConnection.ontrack = (event) => {
         console.log('🎵 ¡Audio remoto recibido!');
         const audioElement = new Audio();
@@ -90,7 +83,6 @@ function setupPeerConnection() {
         audioElement.play().catch(e => console.error('Error al reproducir remoto:', e));
     };
 
-    // ICE CANDIDATES: Crucial para atravesar firewalls
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
             chrome.runtime.sendMessage({ 

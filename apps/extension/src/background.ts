@@ -6,7 +6,6 @@
 let ws: WebSocket | null = null;
 const SERVER_URL = 'wss://audiosync-3q4m.onrender.com';
 
-// 1. Iniciar conexión con el servidor
 function conectarWS() {
     console.log('🔗 Intentando conectar al servidor...');
     ws = new WebSocket(SERVER_URL);
@@ -19,9 +18,7 @@ function conectarWS() {
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        // Manejo de eventos del servidor
         if (data.type === 'room_created') {
-            // Guardamos en el disco duro de Chrome
             chrome.storage.local.set({ appState: { mode: 'HOSTING', roomId: data.roomId } }); 
             chrome.runtime.sendMessage({ type: 'ROOM_CREATED_UPDATE_UI', roomId: data.roomId }).catch(() => {});
         } else if (data.type === 'joined') {
@@ -42,7 +39,6 @@ function conectarWS() {
     ws.onerror = (err) => console.error('Error WebSocket:', err);
 }
 
-// 2. Gestionar eventos de comunicación
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.type) {
         case 'POPUP_START_HOST':
@@ -50,25 +46,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             break;
 
         case 'POPUP_START_GUEST':
-            // Guardamos el estado al instante en el disco
             chrome.storage.local.set({ appState: { mode: 'GUESTING', roomId: message.roomId } }); 
             iniciarMotorAudio('join_room', message.roomId);
             break;
 
         case 'POPUP_RESTART':
             console.log('🔄 Reiniciando conexión...');
-            // Limpiamos el disco duro de Chrome
             chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
-            
-            // Atrapamos el error silenciosamente por si el offscreen no existe
             chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
             
             if (ws) {
-                // ANULAMOS el evento onclose temporalmente para saltarnos los 5 segundos de espera
                 ws.onclose = null; 
                 ws.close(); 
             }
-            // Reconectamos INMEDIATAMENTE
             conectarWS(); 
             break;
 
@@ -81,7 +71,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false; 
 });
 
-// 3. Orquestador de captura de audio
 async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId?: string) {
     await asegurarOffscreen();
     
@@ -89,7 +78,6 @@ async function iniciarMotorAudio(tipoAccion: 'create_room' | 'join_room', roomId
         const tab = tabs[0];
         if (!tab || !tab.id) return;
         
-        // CORRECCIÓN: Usamos el callback que exige TypeScript en lugar de await
         chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (streamId) => {
             if (streamId) {
                 chrome.runtime.sendMessage({ type: 'START_CAPTURE', streamId: streamId }).catch(() => {});
@@ -115,5 +103,4 @@ async function asegurarOffscreen() {
     }
 }
 
-// Iniciar al cargar la extensión
 conectarWS();
