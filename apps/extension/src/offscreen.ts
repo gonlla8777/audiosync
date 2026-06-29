@@ -1,11 +1,10 @@
 /**
- * offscreen.ts - Motor de audio y WebRTC
- * Gestiona la captura de la pestaña y el túnel P2P.
+ * offscreen.ts - Motor de audio y WebRTC (Optimizado)
  */
 
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
-let iceQueue: RTCIceCandidateInit[] = []; // NUEVO: Sala de espera para coordenadas de red
+let iceQueue: RTCIceCandidateInit[] = [];
 
 chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
@@ -34,7 +33,7 @@ chrome.runtime.onMessage.addListener((message) => {
                 peerConnection.close();
                 peerConnection = null;
             }
-            iceQueue = []; // Limpiamos la sala de espera
+            iceQueue = [];
             console.log('🧹 Motor de audio reseteado');
             break;
     }
@@ -52,9 +51,7 @@ async function captureAudio(streamId: string) {
             } as any,
             video: false
         });
-        
         console.log('🎤 Audio capturado con éxito.');
-        // Nota: Silenciamos el eco local. El Host no necesita escucharse a sí mismo doble.
     } catch (error) {
         console.error('❌ Error capturando:', error);
     }
@@ -71,24 +68,22 @@ function setupPeerConnection() {
         ] 
     });
 
+    // Añadimos las pistas ANTES de crear la oferta/respuesta
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection!.addTrack(track, localStream!);
         });
+        console.log('✅ Pistas de audio añadidas a la conexión WebRTC');
     }
 
-peerConnection.ontrack = (event) => {
-    console.log('🎵 ¡Audio remoto recibido!');
-    const audioCtx = new AudioContext();
-    
-    // Si el navegador bloqueó el audio, esto lo obliga a arrancar
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
-    
-    const source = audioCtx.createMediaStreamSource(event.streams[0]);
-    source.connect(audioCtx.destination);
-};
+    peerConnection.ontrack = (event) => {
+        console.log('🎵 ¡Audio remoto recibido!');
+        const audioCtx = new AudioContext();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        const source = audioCtx.createMediaStreamSource(event.streams[0]);
+        source.connect(audioCtx.destination);
+    };
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
@@ -102,12 +97,20 @@ peerConnection.ontrack = (event) => {
 
 async function createAndSendOffer() {
     setupPeerConnection();
-    const offer = await peerConnection!.createOffer();
+    
+    // Fuerza la negociación de audio
+    const offer = await peerConnection!.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false
+    });
+    
     await peerConnection!.setLocalDescription(offer);
+    
     chrome.runtime.sendMessage({ 
         type: 'FORWARD_TO_WS', 
         payload: { type: 'webrtc_offer', payload: peerConnection!.localDescription } 
     });
+    console.log('🚀 Oferta WebRTC enviada con pistas de audio.');
 }
 
 async function handleSignaling(data: any) {
@@ -131,18 +134,15 @@ async function handleSignaling(data: any) {
             break;
 
         case 'webrtc_ice_candidate':
-            // NUEVO: Control de tráfico de paquetes
             if (peerConnection!.remoteDescription) {
                 await peerConnection!.addIceCandidate(new RTCIceCandidate(data.payload)).catch(console.error);
             } else {
-                console.log('⏳ Guardando paquete de red en espera...');
                 iceQueue.push(data.payload);
             }
             break;
     }
 }
 
-// NUEVO: Inyecta los paquetes de red guardados en el momento exacto
 function procesarColaIce() {
     while (iceQueue.length > 0) {
         const candidate = iceQueue.shift();
