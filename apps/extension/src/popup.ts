@@ -2,11 +2,16 @@
 document.addEventListener('DOMContentLoaded', () => {
     console.log('💻 Interfaz Retro cargada. Consultando memoria...');
 
+console.log('💻 Interfaz Retro cargada. Consultando memoria...');
+
     const btnHost = document.getElementById('btnHost') as HTMLButtonElement;
     const btnGuest = document.getElementById('btnGuest') as HTMLButtonElement;
     const statusDiv = document.getElementById('status');
     const roomCodeInput = document.getElementById('roomCode') as HTMLInputElement;
-    const btnRestart = document.getElementById('btnRestart');
+    
+    // CORRECCIÓN: Le aclaramos a TypeScript que estos dos son botones
+    const btnRestart = document.getElementById('btnRestart') as HTMLButtonElement;
+    const btnPowerOff = document.getElementById('btnPowerOff') as HTMLButtonElement;
 
     chrome.storage.local.get(['appState'], (result) => {
         console.log('🧠 Estado en disco duro:', result.appState); // Diagnóstico vital
@@ -46,16 +51,28 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.runtime.sendMessage({ type: 'POPUP_START_GUEST', roomId: code });
     });
 
-    btnRestart?.addEventListener('click', () => {
-        if (statusDiv) statusDiv.innerText = 'REINICIANDO...';
+   btnRestart?.addEventListener('click', () => {
+        if (statusDiv) statusDiv.innerText = 'REINICIANDO... ESPERE 5s';
+        
+        // Bloqueamos TODO inmediatamente al tocar el reset
+        if (btnHost) btnHost.disabled = true;
+        if (btnGuest) btnGuest.disabled = true;
+        if (btnRestart) btnRestart.disabled = true; // Evita que hagan spam del botón
+        if (roomCodeInput) roomCodeInput.disabled = true;
+
         chrome.runtime.sendMessage({ type: 'POPUP_RESTART' });
         
+        // Liberamos los botones después de 5 segundos exactos
         setTimeout(() => {
             if (statusDiv) statusDiv.innerText = 'LISTO PARA CONECTAR';
             if (btnHost) btnHost.disabled = false;
             if (btnGuest) btnGuest.disabled = false;
-            if (roomCodeInput) roomCodeInput.value = '';
-        }, 2000);
+            if (btnRestart) btnRestart.disabled = false;
+            if (roomCodeInput) {
+                roomCodeInput.value = '';
+                roomCodeInput.disabled = false;
+            }
+        }, 5000);
     });
 
     chrome.runtime.onMessage.addListener((message) => {
@@ -68,4 +85,19 @@ document.addEventListener('DOMContentLoaded', () => {
             statusDiv.innerText = 'ESCUCHANDO 🎵';
         }
     });
+
+    btnPowerOff?.addEventListener('click', () => {
+     // Bloqueamos la interfaz en modo "Muerto"
+     if (statusDiv) statusDiv.innerText = 'APAGADO 🛑';
+     if (btnHost) btnHost.disabled = true;
+     if (btnGuest) btnGuest.disabled = true;
+     if (roomCodeInput) {
+         roomCodeInput.value = '';
+         roomCodeInput.disabled = true;
+     }
+
+     // Le avisamos al cerebro que mate todo
+     chrome.runtime.sendMessage({ type: 'POPUP_POWER_OFF' });
+ });
 });
+

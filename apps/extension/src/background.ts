@@ -67,6 +67,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             conectarWS(); 
             break;
 
+            case 'POPUP_POWER_OFF':
+            console.log('🛑 Apagando extensión por completo...');
+            chrome.storage.local.set({ appState: { mode: 'IDLE', roomId: '' } }); 
+            chrome.runtime.sendMessage({ type: 'RESET_AUDIO' }).catch(() => {}); 
+            
+            if (ws) {
+                ws.onclose = null; 
+                ws.close();
+                ws = null; 
+            }
+            // LA DIFERENCIA CLAVE: Aquí NO llamamos a conectarWS(). 
+            // La extensión se queda desconectada hasta que usen el botón Reset.
+            break;
+
         // CORRECCIÓN 2: Le pegamos el RoomID a todos los paquetes WebRTC
         case 'FORWARD_TO_WS':
             if (ws && ws.readyState === WebSocket.OPEN) {
